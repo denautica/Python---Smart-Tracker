@@ -2,3 +2,4 @@ streamlit
 pandas
 google-cloud-aiplatform
 openpyxl
+fpdf2
