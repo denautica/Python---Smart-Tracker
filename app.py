@@ -71,7 +71,14 @@ with st.sidebar:
 if st.session_state.bulk_ai_data:
     fname = list(st.session_state.bulk_ai_data.keys())[0]
     st.sidebar.subheader(f"Reviewing: {fname}")
-    st.sidebar.image(os.path.join(UPLOAD_DIR, fname), use_container_width=True)
+    
+    # --- FIXED PREVIEW LOGIC ---
+    file_ext = fname.lower().split('.')[-1]
+    if file_ext in ['jpg', 'jpeg', 'png', 'bmp']:
+        st.sidebar.image(os.path.join(UPLOAD_DIR, fname), use_container_width=True)
+    elif file_ext == 'pdf':
+        st.sidebar.info(f"📄 PDF Document: {fname}\n\nPDFs cannot be previewed directly in the sidebar. Please download the original file to view.")
+    # ---------------------------
     
     with st.sidebar.form("commit_form"):
         p_name = st.text_input("Project Name", st.session_state.bulk_ai_data[fname].get("project_name"))
