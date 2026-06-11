@@ -70,25 +70,40 @@ with st.sidebar:
 # --- REVIEW & COMMIT ---
 if st.session_state.bulk_ai_data:
     fname = list(st.session_state.bulk_ai_data.keys())[0]
-    st.sidebar.subheader(f"Reviewing: {fname}")
+    st.sidebar.markdown("---")
+    st.sidebar.subheader(f"📋 Verify: {fname}")
     
-    # --- FIXED PREVIEW LOGIC ---
+    # 1. Safe Preview Logic (prevents PIL error)
     file_ext = fname.lower().split('.')[-1]
     if file_ext in ['jpg', 'jpeg', 'png', 'bmp']:
         st.sidebar.image(os.path.join(UPLOAD_DIR, fname), use_container_width=True)
-    elif file_ext == 'pdf':
-        st.sidebar.info(f"📄 PDF Document: {fname}\n\nPDFs cannot be previewed directly in the sidebar. Please download the original file to view.")
-    # ---------------------------
+    else:
+        st.sidebar.info(f"📄 Document: {fname} (Preview unavailable for PDF)")
+
+    # 2. Extract Data for Form
+    data = st.session_state.bulk_ai_data[fname]
     
+    # 3. The Form (ALWAYS rendered)
     with st.sidebar.form("commit_form"):
-        p_name = st.text_input("Project Name", st.session_state.bulk_ai_data[fname].get("project_name"))
-        if st.form_submit_button("Commit to Database"):
-            conn = get_db()
-            conn.execute("INSERT INTO contracts (project_name, date_added) VALUES (?, ?)", (p_name, datetime.now()))
-            conn.commit()
-            conn.close()
-            del st.session_state.bulk_ai_data[fname]
-            st.rerun()
+        project = st.text_input("Project Name", value=data.get("project_name", ""))
+        vendor = st.text_input("Vendor Name", value=data.get("vendor_name", ""))
+        status = st.selectbox("Status", ["Active", "Expired", "Superseded"], index=0)
+        
+        # Add your other fields here (Billing, Dates, etc.)
+        
+        submit = st.form_submit_button("Commit to Database ➡️")
+        
+    if submit:
+        # DB Logic
+        conn = get_db()
+        conn.execute("INSERT INTO contracts (project_name, vendor_name, status, date_added) VALUES (?, ?, ?, ?)", 
+                     (project, vendor, status, datetime.now()))
+        conn.commit()
+        conn.close()
+        
+        # Cleanup Queue
+        del st.session_state.bulk_ai_data[fname]
+        st.rerun()
 
 # --- SEARCH & DASHBOARD ---
 st.subheader("🔍 Search & Filter")
