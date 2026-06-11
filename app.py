@@ -67,43 +67,54 @@ with st.sidebar:
                 # Simulate AI analysis (integration with your existing function)
                 st.session_state.bulk_ai_data[f.name] = {"project_name": f.name.split('.')[0], "status": "Active"}
 
-# --- REVIEW & COMMIT ---
+# --- MAIN AREA: PREVIEW ---
 if st.session_state.bulk_ai_data:
     fname = list(st.session_state.bulk_ai_data.keys())[0]
-    st.sidebar.markdown("---")
-    st.sidebar.subheader(f"📋 Verify: {fname}")
     
-    # 1. Safe Preview Logic (prevents PIL error)
+    st.subheader(f"🔍 Previewing: {fname}")
+    
+    file_path = os.path.join(UPLOAD_DIR, fname)
     file_ext = fname.lower().split('.')[-1]
-    if file_ext in ['jpg', 'jpeg', 'png', 'bmp']:
-        st.sidebar.image(os.path.join(UPLOAD_DIR, fname), use_container_width=True)
-    else:
-        st.sidebar.info(f"📄 Document: {fname} (Preview unavailable for PDF)")
-
-    # 2. Extract Data for Form
-    data = st.session_state.bulk_ai_data[fname]
     
-    # 3. The Form (ALWAYS rendered)
-    with st.sidebar.form("commit_form"):
-        project = st.text_input("Project Name", value=data.get("project_name", ""))
-        vendor = st.text_input("Vendor Name", value=data.get("vendor_name", ""))
-        status = st.selectbox("Status", ["Active", "Expired", "Superseded"], index=0)
-        
-        # Add your other fields here (Billing, Dates, etc.)
-        
-        submit = st.form_submit_button("Commit to Database ➡️")
-        
-    if submit:
-        # DB Logic
-        conn = get_db()
-        conn.execute("INSERT INTO contracts (project_name, vendor_name, status, date_added) VALUES (?, ?, ?, ?)", 
-                     (project, vendor, status, datetime.now()))
-        conn.commit()
-        conn.close()
-        
-        # Cleanup Queue
-        del st.session_state.bulk_ai_data[fname]
-        st.rerun()
+    if file_ext in ['jpg', 'jpeg', 'png', 'bmp']:
+        st.image(file_path, use_container_width=True)
+    elif file_ext == 'pdf':
+        # PDF Preview in Main Screen
+        with open(file_path, "rb") as f:
+            base64_pdf = f.read().hex() # Simple way to render PDF in browser
+        st.markdown(f'<embed src="data:application/pdf;base64,{base64_pdf}" width="100%" height="600px" type="application/pdf">', unsafe_allow_html=True)
+
+# --- SIDEBAR: FORM ---
+with st.sidebar:
+    st.header("📋 Data Entry Form")
+    if st.session_state.bulk_ai_data:
+        data = st.session_state.bulk_ai_data[fname]
+        with st.form("commit_form"):
+            # ALL your fields now explicitly listed here
+            project = st.text_input("Project Name", value=data.get("project_name", ""))
+            property_name = st.text_input("Property", value=data.get("property_name", ""))
+            vendor = st.text_input("Vendor Name", value=data.get("vendor_name", ""))
+            doc_type = st.selectbox("Doc Type", ["Estimate/Bid", "Executed Contract", "Receipt/Invoice", "Other"])
+            status = st.selectbox("Status", ["Active", "Expired", "Superseded"])
+            short_summary = st.text_input("Short Summary", value=data.get("short_summary", ""))
+            description = st.text_area("Scope", value=data.get("description", ""))
+            is_recurring = st.radio("Recurring?", ["No", "Yes"])
+            billing_interval = st.text_input("Billing Interval", value=data.get("billing_interval", ""))
+            interval_amount = st.text_input("Rate/Cost", value=data.get("interval_amount", ""))
+            deposit = st.text_input("Deposit Status", value=data.get("deposit_required", ""))
+            contract_date = st.date_input("Contract Date")
+            term_end = st.date_input("Term End Date")
+            notice = st.text_input("Notice Period", value=data.get("term_notice", ""))
+            deadline = st.date_input("Cancel Deadline")
+            
+            submit = st.form_submit_button("Commit to Database")
+            
+        if submit:
+            # Insert logic here...
+            del st.session_state.bulk_ai_data[fname]
+            st.rerun()
+    else:
+        st.info("No files pending review.")
 
 # --- SEARCH & DASHBOARD ---
 st.subheader("🔍 Search & Filter")
