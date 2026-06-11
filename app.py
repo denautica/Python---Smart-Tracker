@@ -116,6 +116,32 @@ with st.sidebar:
     else:
         st.info("No files pending review.")
 
+# --- SIDEBAR: UPLOAD & AI ENGINE ---
+with st.sidebar:
+    st.header("➕ Upload Documents")
+    uploaded_files = st.file_uploader("Upload", accept_multiple_files=True)
+    
+    if uploaded_files:
+        for f_item in uploaded_files:
+            # Only analyze if we haven't already processed this file
+            if f_item.name not in st.session_state.bulk_ai_data:
+                file_path = os.path.join(UPLOAD_DIR, f_item.name)
+                with open(file_path, "wb") as f:
+                    f.write(f_item.getbuffer())
+                
+                # Run the AI Extraction
+                with st.spinner(f"🤖 AI Scanning {f_item.name}..."):
+                    ext = f_item.name.lower().split(".")[-1]
+                    mime = "application/pdf" if ext == "pdf" else "image/jpeg"
+                    
+                    extracted_data = ai_analyze_file(file_path, mime)
+                    
+                    if extracted_data:
+                        st.session_state.bulk_ai_data[f_item.name] = extracted_data
+                    else:
+                        # Fallback if AI fails
+                        st.session_state.bulk_ai_data[f_item.name] = {"project_name": f_item.name}
+
 # --- SEARCH & DASHBOARD ---
 st.subheader("🔍 Search & Filter")
 c1, c2, c3 = st.columns(3)
