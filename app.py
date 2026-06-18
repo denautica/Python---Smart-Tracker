@@ -24,29 +24,62 @@ except ImportError:
 PROJECT_ID = "contr-tracker"
 LOCATION = "us-central1"
 
+def load_gcp_service_account_credentials():
+    if service_account is None:
+        return None, "google-auth library unavailable"
+
+    credentials_info = None
+    try:
+        credentials_info = st.secrets.get("gcp_service_account")
+    except Exception:
+        credentials_info = None
+
+    if credentials_info:
+        if isinstance(credentials_info, str):
+            try:
+                credentials_info = json.loads(credentials_info)
+            except json.JSONDecodeError as jex:
+                raise RuntimeError("Streamlit secret 'gcp_service_account' is not valid JSON.") from jex
+        return service_account.Credentials.from_service_account_info(credentials_info), "Streamlit secret gcp_service_account"
+
+    env_sa = os.environ.get("GCP_SERVICE_ACCOUNT")
+    if env_sa:
+        try:
+            credentials_info = json.loads(env_sa)
+        except json.JSONDecodeError as jex:
+            raise RuntimeError("Environment variable GCP_SERVICE_ACCOUNT is not valid JSON.") from jex
+        return service_account.Credentials.from_service_account_info(credentials_info), "environment variable GCP_SERVICE_ACCOUNT"
+
+    gcp_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+    if gcp_path:
+        if not os.path.exists(gcp_path):
+            raise RuntimeError(f"GOOGLE_APPLICATION_CREDENTIALS path does not exist: {gcp_path}")
+        return service_account.Credentials.from_service_account_file(gcp_path), f"GOOGLE_APPLICATION_CREDENTIALS file: {gcp_path}"
+
+    return None, None
+
 if "ai_status_checked" not in st.session_state:
     st.session_state.ai_status_checked = True
     st.session_state.ai_enabled = False
+    st.session_state.ai_auth_source = None
     try:
-        credentials = None
-        if "gcp_service_account" in st.secrets:
-            if service_account is None:
-                raise RuntimeError("google-auth library is missing")
-            credentials_info = st.secrets["gcp_service_account"]
-            credentials = service_account.Credentials.from_service_account_info(credentials_info)
-        else:
+        credentials, auth_source = load_gcp_service_account_credentials()
+        st.session_state.ai_auth_source = auth_source
+
+        if credentials is None:
             if google is None:
                 raise RuntimeError("google-auth library is missing")
             credentials, project = google.auth.default()
+            st.session_state.ai_auth_source = "Application Default Credentials"
 
         vertexai.init(project=PROJECT_ID, location=LOCATION, credentials=credentials)
         st.session_state.ai_enabled = True
     except (DefaultCredentialsError, RuntimeError) as e:
         st.session_state.ai_enabled = False
         st.warning(
-            "Vertex AI is not available because Application Default Credentials or Streamlit service account secrets are not configured. "
+            "Vertex AI is not available because Application Default Credentials or service account credentials are not configured. "
             "Uploaded documents will still be saved, but auto extraction is disabled. "
-            "Set `gcp_service_account` in Streamlit secrets or run `gcloud auth application-default login`."
+            "Set `gcp_service_account` in Streamlit secrets, define `GCP_SERVICE_ACCOUNT` or `GOOGLE_APPLICATION_CREDENTIALS`, or run `gcloud auth application-default login`."
         )
         st.error(f"Cloud Initialization Warning: {str(e)}")
     except Exception as e:
@@ -193,6 +226,15 @@ def render_file_preview(file_path, file_name):
 # ==========================================
 st.set_page_config(page_title="AI Contract Database", layout="wide")
 st.title("📂 Smart Project Contract & Estimate Database")
+
+if AI_ENABLED:
+    st.success(f"Vertex AI enabled using: {st.session_state.ai_auth_source}")
+else:
+    warning_text = st.session_state.get("ai_auth_source") or "no valid auth source found"
+    st.warning(
+        "Vertex AI is disabled. Uploaded documents will still save, but auto extraction will not run. "
+        f"Auth source: {warning_text}"
+    )
 
 # --- Sidebar Upload Components ---
 st.sidebar.header("➕ Bulk Document Upload")
