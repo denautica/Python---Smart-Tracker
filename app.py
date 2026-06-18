@@ -7,6 +7,7 @@ import vertexai
 from vertexai.generative_models import GenerativeModel, Part
 import json
 import io
+import base64
 
 # ==========================================
 # --- AI SETUP & CONFIGURATION ---
@@ -115,6 +116,26 @@ def convert_df_to_excel(dataframe):
         dataframe.to_excel(writer, index=False, sheet_name="Contracts Report")
     return output.getvalue()
 
+
+def render_file_preview(file_path, file_name):
+    if not os.path.exists(file_path):
+        st.warning("Preview unavailable: file not found.")
+        return
+
+    file_ext = file_name.lower().split('.')[-1]
+    if file_ext in ['jpg', 'jpeg', 'png']:
+        st.image(file_path, caption=f"Preview: {file_name}", use_column_width=True)
+    elif file_ext == 'pdf':
+        with open(file_path, 'rb') as f:
+            pdf_bytes = f.read()
+        b64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
+        pdf_display = f'<iframe src="data:application/pdf;base64,{b64_pdf}" width="100%" height="700px" type="application/pdf"></iframe>'
+        st.markdown(pdf_display, unsafe_allow_html=True)
+    else:
+        st.write(f"Preview is not available for {file_name}. Download to view the file.")
+        with open(file_path, 'rb') as f:
+            st.download_button("Download Document", f.read(), file_name=file_name)
+
 # ==========================================
 # --- USER INTERFACE (STREAMLIT) ---
 # ==========================================
@@ -176,11 +197,11 @@ if uploaded_files:
                     }
 
 # Review Form Block
-if uploaded_files:
+if uploaded_files or st.session_state.bulk_ai_data:
     st.sidebar.markdown("---")
     st.sidebar.markdown("### 📋 Review Extractions")
     
-    file_options = [f.name for f in uploaded_files]
+    file_options = list(st.session_state.bulk_ai_data.keys())
     
     if st.session_state.review_queue_index >= len(file_options):
         st.session_state.review_queue_index = max(0, len(file_options) - 1)
@@ -198,6 +219,12 @@ if uploaded_files:
         
     current_data = st.session_state.bulk_ai_data.get(selected_file_name, {})
     
+    preview_file_path = os.path.abspath(os.path.join(UPLOAD_DIR, selected_file_name))
+    st.markdown("### 📄 Uploaded Document Preview")
+    with st.expander(f"Preview: {selected_file_name}", expanded=False):
+        render_file_preview(preview_file_path, selected_file_name)
+        st.markdown("---")
+
     p_init = current_data.get("project_name", "")
     prop_init = current_data.get("property_name", "")
     v_init = current_data.get("vendor_name", "")
@@ -214,57 +241,40 @@ if uploaded_files:
     amt_init = current_data.get("interval_amount", "")
     dep_init = current_data.get("deposit_required", "No")
     notice_init = current_data.get("term_notice", "None")
+    term_start_parsed = parse_to_widget_date(current_data.get("term_start", ""))
+    auto_renew_idx = 1 if current_data.get("auto_renew", "No") == "Yes" else 0
     
-    def parse_to_widget_date(date_str):
-        try:
-            return datetime.strptime(date_str, "%Y-%m-%d").date() if date_str else None
-        except ValueError:
-            return None
+    if "current_review_file" not in st.session_state or st.session_state.current_review_file != selected_file_name:
+        st.session_state.current_review_file = selected_file_name
+        st.session_state.review_project = p_init
+        st.session_state.review_property = prop_init
+        st.session_state.review_vendor = v_init
+        st.session_state.review_doc_type = d_type_idx
+        st.session_state.review_status = status_idx
+        st.session_state.review_contract_date = c_date_parsed
+        st.session_state.review_short_summary = short_init
+        st.session_state.review_description = desc_init
+        st.session_state.review_is_recurring = rec_init
+        st.session_state.review_billing_interval = bill_init
+        st.session_state.review_interval_amount = amt_init
+        st.session_state.review_deposit_required = dep_init
+        st.session_state.review_term_start = term_start_parsed
+        st.session_state.review_term_end = end_date_parsed
+        st.session_state.review_auto_renew = auto_renew_idx
+        st.session_state.review_term_notice = notice_init
+        st.session_state.review_cancel_deadline = deadline_parsed
 
-    c_date_parsed = parse_to_widget_date(current_data.get("contract_date", ""))
-    end_date_parsed = parse_to_widget_date(current_data.get("term_end", ""))
-    deadline_parsed = parse_to_widget_date(current_data.get("cancel_deadline", ""))
-
-    with st.sidebar.form("upload_form", clear_on_submit=False):
-        st.markdown(f"**Document Queue:** {st.session_state.review_queue_index + 1} of {len(file_options)}")
-        st.markdown(f"**Editing Profile:** `{selected_file_name}`")
-        
-        project = st.text_input("Project / Task Name", value=p_init)
-        property_name = st.text_input("Property / Location Name", value=prop_init)
-        vendor = st.text_input("Vendor Name", value=v_init)
-        doc_type = st.selectbox("Document Type", doc_types, index=d_type_idx)
-        status = st.selectbox("Contract Lifecycle Status", status_types, index=status_idx)
-        
-        contract_date = st.date_input("Document / Execution Date", value=c_date_parsed if c_date_parsed else None)
-        
-        st.markdown("---")
-        short_summary = st.text_input("Short Summary Statement", value=short_init)
-        description = st.text_area("Detailed Scope & Keywords", value=desc_init, height=100)
-        
-        st.markdown("---")
-        is_recurring = st.radio("Is this a Recurring Service / Utility?", ["No", "Yes"], index=rec_init)
-        billing_interval = st.text_input("Billing Interval (e.g., Monthly, N/A)", value=bill_init)
-        interval_amount = st.text_input("Rate / Interval Billing Cost", value=amt_init)
-        deposit_required = st.text_input("Deposit Requirement Status", value=dep_init)
-        
-        st.markdown("---")
-        # FIXED: Restored complete markdown call with proper closure
-        st.markdown("### 🗓️ Contract Term & Cancellation Dates")
-        start_date = st.date_input("Term Start Date", value=None)
-        
-        end_date = st.date_input("Term Expiration Date", value=end_date_parsed if end_date_parsed else None)
-        auto_renew = st.radio("Auto-Renew Active?", ["No", "Yes"], index=0)
-        term_notice = st.text_input("Notice Needed (e.g., 30 Days)", value=notice_init)
-        cancel_deadline = st.date_input("AI Calculated Cancellation Due Date", value=deadline_parsed if deadline_parsed else None)
-        
-        submit = st.form_submit_button("Commit and Advance Queue ➡️")
-
-    if submit:
+    def commit_review_entry(
+        selected_file_name, project, property_name, vendor, doc_type, status,
+        description, short_summary, is_recurring, billing_interval, interval_amount,
+        deposit_required, contract_date, start_date, end_date, auto_renew, term_notice,
+        cancel_deadline
+    ):
         start_str = start_date.strftime("%Y-%m-%d") if start_date else "N/A"
         end_str = end_date.strftime("%Y-%m-%d") if end_date else "N/A"
         c_date_str = contract_date.strftime("%Y-%m-%d") if contract_date else "N/A"
         deadline_str = cancel_deadline.strftime("%Y-%m-%d") if cancel_deadline else "N/A"
-        
+
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
         c.execute("""
@@ -281,9 +291,13 @@ if uploaded_files:
         ))
         conn.commit()
         conn.close()
-        
-        if st.session_state.review_queue_index + 1 < len(file_options):
-            st.session_state.review_queue_index += 1
+
+        if selected_file_name in st.session_state.bulk_ai_data:
+            del st.session_state.bulk_ai_data[selected_file_name]
+
+        remaining_files = list(st.session_state.bulk_ai_data.keys())
+        if remaining_files:
+            st.session_state.review_queue_index = min(st.session_state.review_queue_index, len(remaining_files) - 1)
             st.rerun()
         else:
             st.sidebar.success("🎉 Final document committed! All files processed.")
@@ -291,17 +305,91 @@ if uploaded_files:
             st.session_state.bulk_ai_data = {}
             st.rerun()
 
+    with st.sidebar.form("upload_form", clear_on_submit=False):
+        st.markdown(f"**Document Queue:** {st.session_state.review_queue_index + 1} of {len(file_options)}")
+        st.markdown(f"**Editing Profile:** `{selected_file_name}`")
+        
+        project = st.text_input("Project / Task Name", value=st.session_state.review_project, key="review_project")
+        property_name = st.text_input("Property / Location Name", value=st.session_state.review_property, key="review_property")
+        vendor = st.text_input("Vendor Name", value=st.session_state.review_vendor, key="review_vendor")
+        doc_type = st.selectbox("Document Type", doc_types, index=st.session_state.review_doc_type, key="review_doc_type")
+        status = st.selectbox("Contract Lifecycle Status", status_types, index=st.session_state.review_status, key="review_status")
+        
+        contract_date = st.date_input("Document / Execution Date", value=st.session_state.review_contract_date, key="review_contract_date")
+        
+        st.markdown("---")
+        short_summary = st.text_input("Short Summary Statement", value=st.session_state.review_short_summary, key="review_short_summary")
+        description = st.text_area("Detailed Scope & Keywords", value=st.session_state.review_description, height=100, key="review_description")
+        
+        st.markdown("---")
+        is_recurring = st.radio("Is this a Recurring Service / Utility?", ["No", "Yes"], index=st.session_state.review_is_recurring, key="review_is_recurring")
+        billing_interval = st.text_input("Billing Interval (e.g., Monthly, N/A)", value=st.session_state.review_billing_interval, key="review_billing_interval")
+        interval_amount = st.text_input("Rate / Interval Billing Cost", value=st.session_state.review_interval_amount, key="review_interval_amount")
+        deposit_required = st.text_input("Deposit Requirement Status", value=st.session_state.review_deposit_required, key="review_deposit_required")
+        
+        st.markdown("---")
+        st.markdown("### 🗓️ Contract Term & Cancellation Dates")
+        start_date = st.date_input("Term Start Date", value=st.session_state.review_term_start, key="review_term_start")
+        
+        end_date = st.date_input("Term Expiration Date", value=st.session_state.review_term_end, key="review_term_end")
+        auto_renew = st.radio("Auto-Renew Active?", ["No", "Yes"], index=st.session_state.review_auto_renew, key="review_auto_renew")
+        term_notice = st.text_input("Notice Needed (e.g., 30 Days)", value=st.session_state.review_term_notice, key="review_term_notice")
+        cancel_deadline = st.date_input("AI Calculated Cancellation Due Date", value=st.session_state.review_cancel_deadline, key="review_cancel_deadline")
+        
+        submit = st.form_submit_button("Commit and Advance Queue ➡️")
+
+    if submit:
+        commit_review_entry(
+            selected_file_name, project, property_name, vendor, doc_type, status,
+            description, short_summary, is_recurring, billing_interval, interval_amount,
+            deposit_required, contract_date, start_date, end_date, auto_renew,
+            term_notice, cancel_deadline
+        )
+
+    if len(file_options) > 1 and st.sidebar.button("Skip to Next Document ➡️", key="skip_next_button"):
+        if st.session_state.review_queue_index + 1 < len(file_options):
+            st.session_state.review_queue_index += 1
+        else:
+            st.session_state.review_queue_index = 0
+        st.rerun()
+
+    if len(file_options) > 1 and st.sidebar.button("Commit & Next Document ➡️", key="commit_next_button"):
+        commit_review_entry(
+            selected_file_name,
+            st.session_state.review_project,
+            st.session_state.review_property,
+            st.session_state.review_vendor,
+            st.session_state.review_doc_type,
+            st.session_state.review_status,
+            st.session_state.review_description,
+            st.session_state.review_short_summary,
+            st.session_state.review_is_recurring,
+            st.session_state.review_billing_interval,
+            st.session_state.review_interval_amount,
+            st.session_state.review_deposit_required,
+            st.session_state.review_contract_date,
+            st.session_state.review_term_start,
+            st.session_state.review_term_end,
+            st.session_state.review_auto_renew,
+            st.session_state.review_term_notice,
+            st.session_state.review_cancel_deadline
+        )
+
 # --- Search Section ---
 st.header("🔍 Cross-Project Search Dashboard")
 
-s_col1, s_col2, s_col3, s_col4 = st.columns(4)
+s_col1, s_col2, s_col3, s_col4, s_col5, s_col6 = st.columns([3,2,2,2,2,1])
 with s_col1:
     search_keyword = st.text_input("Search by Keyword or Summary")
 with s_col2:
-    search_vendor = st.text_input("Filter by Vendor Name")
+    search_project = st.text_input("Filter by Project Name")
 with s_col3:
-    search_property = st.text_input("Filter by Property Name")
+    search_vendor = st.text_input("Filter by Vendor Name")
 with s_col4:
+    search_property = st.text_input("Filter by Property Name")
+with s_col5:
+    search_doc_type = st.text_input("Filter by Document Type")
+with s_col6:
     search_status = st.selectbox("Filter by Lifecycle Status", ["All Records", "Active", "Expired", "Superseded"])
 
 # Load and query records dynamically from database
@@ -313,12 +401,18 @@ if search_keyword:
     query += " AND (project_name LIKE ? OR description LIKE ? OR short_summary LIKE ? OR document_type LIKE ?)"
     like_word = f"%{search_keyword}%"
     params.extend([like_word, like_word, like_word, like_word])
+if search_project:
+    query += " AND project_name LIKE ?"
+    params.append(f"%{search_project}%")
 if search_vendor:
     query += " AND vendor_name LIKE ?"
     params.append(f"%{search_vendor}%")
 if search_property:
     query += " AND property_name LIKE ?"
     params.append(f"%{search_property}%")
+if search_doc_type:
+    query += " AND document_type LIKE ?"
+    params.append(f"%{search_doc_type}%")
 if search_status != "All Records":
     query += " AND status = ?"
     params.append(search_status)
