@@ -1,5 +1,4 @@
 import streamlit as st
-import streamlit.components.v1 as components
 import pandas as pd
 import sqlite3
 import os
@@ -433,17 +432,13 @@ def render_file_preview(file_path, file_name):
             pdf_bytes = f.read()
 
         st.download_button("Download PDF", pdf_bytes, file_name=file_name, mime="application/pdf")
-        pdf_base64 = base64.b64encode(pdf_bytes).decode('utf-8')
-        pdf_html = f"""
-            <html>
-                <body style='margin:0;padding:0;'>
-                    <embed src='data:application/pdf;base64,{pdf_base64}' type='application/pdf' width='100%' height='700px' />
-                </body>
-            </html>
-        """
-        components.html(pdf_html, height=720)
+        pdf_url = f"data:application/pdf;base64,{base64.b64encode(pdf_bytes).decode('utf-8')}"
         st.markdown(
-            "If Chrome still blocks this view, use the download button above to open the file locally."
+            f'<a href="{pdf_url}" target="_blank" rel="noreferrer">Open PDF in new tab</a>',
+            unsafe_allow_html=True
+        )
+        st.markdown(
+            "If Chrome blocks the embedded preview, use the download link above or open the file in a local PDF viewer."
         )
     else:
         st.write(f"Preview is not available for {file_name}. Download to view the file.")
