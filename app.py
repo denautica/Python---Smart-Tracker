@@ -105,7 +105,7 @@ init_db()
 # ==========================================
 def ai_analyze_file(file_path, mime_type):
     prompt = """
-    Analyze this attached document or image and extract data into a clean JSON object. 
+    Analyze this attached document or image and extract data into a clean JSON object.
     Read all visible handwritten or typed text carefully.
     Return ONLY a raw JSON string with exactly these keys (do not include markdown block ticks like ```json):
     {
@@ -121,6 +121,7 @@ def ai_analyze_file(file_path, mime_type):
       "interval_amount": "The recurring dollar amount charged per billing interval cycle (e.g. '$150.00'). If not recurring, extract the total estimated project cost",
       "deposit_required": "List the explicit dollar or percentage deposit amount required to start work if explicitly stated, otherwise return 'No'",
       "contract_date": "The document's creation date, proposal date, or date of execution/signature formatted as YYYY-MM-DD. If no date is recognizable, leave this string completely empty.",
+      "term_start": "The explicit start date of the contract terms formatted as YYYY-MM-DD. Leave blank if not found.",
       "term_end": "The explicit expiration or end date of the contract terms formatted as YYYY-MM-DD. Leave blank if not found.",
       "term_notice": "The contractual termination notice period length (e.g., '30 days', '60 days', 'None').",
       "cancel_deadline": "CRITICAL CALCULATION: Look at the extracted 'term_end' date and subtract the 'term_notice' requirement to determine the exact final day notice must be sent to prevent auto-renewal. Format as YYYY-MM-DD. If there is no specific notice period or no end date can be found, leave this completely empty."
@@ -129,18 +130,24 @@ def ai_analyze_file(file_path, mime_type):
     try:
         with open(file_path, "rb") as f:
             file_bytes = f.read()
-            
+
         document_part = Part.from_data(data=file_bytes, mime_type=mime_type)
+        prompt_part = Part.from_text(prompt)
         model = GenerativeModel("gemini-2.5-flash")
-        response = model.generate_content([document_part, prompt])
-        
+        response = model.generate_content([document_part, prompt_part])
+
+        # Vertex may return an iterable response in some SDK versions.
+        if hasattr(response, "__iter__") and not isinstance(response, (str, bytes)):
+            response = next(iter(response))
+
         clean_text = response.text.strip()
         if clean_text.startswith("```"):
             clean_text = clean_text.split("\n", 1)[1].rsplit("\n", 1)[0]
-        if clean_text.startswith("json"):
+        if clean_text.lower().startswith("json"):
             clean_text = clean_text.split("json", 1)[1]
-            
-        return json.loads(clean_text.strip())
+
+        cleaned = clean_text.strip()
+        return json.loads(cleaned)
     except Exception as e:
         st.error(f"AI Extraction failed via Vertex: {str(e)}")
         return None
@@ -363,8 +370,8 @@ if uploaded_files or st.session_state.bulk_ai_data:
         project = st.text_input("Project / Task Name", value=st.session_state.review_project, key="review_project")
         property_name = st.text_input("Property / Location Name", value=st.session_state.review_property, key="review_property")
         vendor = st.text_input("Vendor Name", value=st.session_state.review_vendor, key="review_vendor")
-        doc_type = st.selectbox("Document Type", doc_types, index=st.session_state.review_doc_type, key="review_doc_type")
-        status = st.selectbox("Contract Lifecycle Status", status_types, index=st.session_state.review_status, key="review_status")
+        doc_type = st.selectbox("Document Type", doc_types, value=doc_types[st.session_state.review_doc_type] if isinstance(st.session_state.review_doc_type, int) and 0 <= st.session_state.review_doc_type < len(doc_types) else st.session_state.review_doc_type, key="review_doc_type")
+        status = st.selectbox("Contract Lifecycle Status", status_types, value=status_types[st.session_state.review_status] if isinstance(st.session_state.review_status, int) and 0 <= st.session_state.review_status < len(status_types) else st.session_state.review_status, key="review_status")
         
         contract_date = st.date_input("Document / Execution Date", value=st.session_state.review_contract_date, key="review_contract_date")
         
@@ -373,7 +380,7 @@ if uploaded_files or st.session_state.bulk_ai_data:
         description = st.text_area("Detailed Scope & Keywords", value=st.session_state.review_description, height=100, key="review_description")
         
         st.markdown("---")
-        is_recurring = st.radio("Is this a Recurring Service / Utility?", ["No", "Yes"], index=st.session_state.review_is_recurring, key="review_is_recurring")
+        is_recurring = st.radio("Is this a Recurring Service / Utility?", ["No", "Yes"], index=st.session_state.review_is_recurring if isinstance(st.session_state.review_is_recurring, int) else (1 if st.session_state.review_is_recurring == "Yes" else 0), key="review_is_recurring")
         billing_interval = st.text_input("Billing Interval (e.g., Monthly, N/A)", value=st.session_state.review_billing_interval, key="review_billing_interval")
         interval_amount = st.text_input("Rate / Interval Billing Cost", value=st.session_state.review_interval_amount, key="review_interval_amount")
         deposit_required = st.text_input("Deposit Requirement Status", value=st.session_state.review_deposit_required, key="review_deposit_required")
@@ -383,7 +390,7 @@ if uploaded_files or st.session_state.bulk_ai_data:
         start_date = st.date_input("Term Start Date", value=st.session_state.review_term_start, key="review_term_start")
         
         end_date = st.date_input("Term Expiration Date", value=st.session_state.review_term_end, key="review_term_end")
-        auto_renew = st.radio("Auto-Renew Active?", ["No", "Yes"], index=st.session_state.review_auto_renew, key="review_auto_renew")
+        auto_renew = st.radio("Auto-Renew Active?", ["No", "Yes"], index=st.session_state.review_auto_renew if isinstance(st.session_state.review_auto_renew, int) else (1 if st.session_state.review_auto_renew == "Yes" else 0), key="review_auto_renew")
         term_notice = st.text_input("Notice Needed (e.g., 30 Days)", value=st.session_state.review_term_notice, key="review_term_notice")
         cancel_deadline = st.date_input("AI Calculated Cancellation Due Date", value=st.session_state.review_cancel_deadline, key="review_cancel_deadline")
         
