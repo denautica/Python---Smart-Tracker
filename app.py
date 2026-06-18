@@ -9,23 +9,46 @@ import json
 import io
 import base64
 
+try:
+    import google.auth
+    from google.auth.exceptions import DefaultCredentialsError
+except ImportError:
+    google = None
+    DefaultCredentialsError = Exception
+
 # ==========================================
 # --- AI SETUP & CONFIGURATION ---
 # ==========================================
 PROJECT_ID = "contr-tracker"
 LOCATION = "us-central1"
-AI_ENABLED = True
 
-try:
-    vertexai.init(project=PROJECT_ID, location=LOCATION)
-except Exception as e:
-    AI_ENABLED = False
-    st.warning(
-        "Vertex AI is not available in this environment. "
-        "Uploaded documents will still be saved, but auto extraction is disabled. "
-        "Set GOOGLE_APPLICATION_CREDENTIALS or run on Google Cloud to enable AI extraction."
-    )
-    st.error(f"Cloud Initialization Warning: {str(e)}")
+if "ai_status_checked" not in st.session_state:
+    st.session_state.ai_status_checked = True
+    st.session_state.ai_enabled = False
+    try:
+        if google is None:
+            raise RuntimeError("google-auth library is missing")
+
+        # Confirm ADC are available before initializing Vertex.
+        credentials, project = google.auth.default()
+        vertexai.init(project=PROJECT_ID, location=LOCATION)
+        st.session_state.ai_enabled = True
+    except (DefaultCredentialsError, RuntimeError) as e:
+        st.session_state.ai_enabled = False
+        st.warning(
+            "Vertex AI is not available because Application Default Credentials are not configured. "
+            "Uploaded documents will still be saved, but auto extraction is disabled. "
+            "Run `gcloud auth application-default login` or set GOOGLE_APPLICATION_CREDENTIALS."
+        )
+        st.error(f"Cloud Initialization Warning: {str(e)}")
+    except Exception as e:
+        st.session_state.ai_enabled = False
+        st.warning(
+            "Vertex AI initialization failed. Uploaded documents will still be saved, but auto extraction is disabled."
+        )
+        st.error(f"Cloud Initialization Warning: {str(e)}")
+
+AI_ENABLED = st.session_state.get("ai_enabled", False)
 
 # Safe relative paths using forward slashes to prevent OneDrive Unicode escape issues
 UPLOAD_DIR = "stored_contracts"
@@ -122,6 +145,13 @@ def convert_df_to_excel(dataframe):
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         dataframe.to_excel(writer, index=False, sheet_name="Contracts Report")
     return output.getvalue()
+
+
+def parse_to_widget_date(date_str):
+    try:
+        return datetime.strptime(date_str, "%Y-%m-%d").date() if date_str else None
+    except Exception:
+        return None
 
 
 def render_file_preview(file_path, file_name):
@@ -251,7 +281,10 @@ if uploaded_files or st.session_state.bulk_ai_data:
     amt_init = current_data.get("interval_amount", "")
     dep_init = current_data.get("deposit_required", "No")
     notice_init = current_data.get("term_notice", "None")
+    c_date_parsed = parse_to_widget_date(current_data.get("contract_date", ""))
     term_start_parsed = parse_to_widget_date(current_data.get("term_start", ""))
+    end_date_parsed = parse_to_widget_date(current_data.get("term_end", ""))
+    deadline_parsed = parse_to_widget_date(current_data.get("cancel_deadline", ""))
     auto_renew_idx = 1 if current_data.get("auto_renew", "No") == "Yes" else 0
     
     if "current_review_file" not in st.session_state or st.session_state.current_review_file != selected_file_name:
