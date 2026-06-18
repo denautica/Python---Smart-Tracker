@@ -12,9 +12,11 @@ import base64
 try:
     import google.auth
     from google.auth.exceptions import DefaultCredentialsError
+    from google.oauth2 import service_account
 except ImportError:
     google = None
     DefaultCredentialsError = Exception
+    service_account = None
 
 # ==========================================
 # --- AI SETUP & CONFIGURATION ---
@@ -26,19 +28,25 @@ if "ai_status_checked" not in st.session_state:
     st.session_state.ai_status_checked = True
     st.session_state.ai_enabled = False
     try:
-        if google is None:
-            raise RuntimeError("google-auth library is missing")
+        credentials = None
+        if "gcp_service_account" in st.secrets:
+            if service_account is None:
+                raise RuntimeError("google-auth library is missing")
+            credentials_info = st.secrets["gcp_service_account"]
+            credentials = service_account.Credentials.from_service_account_info(credentials_info)
+        else:
+            if google is None:
+                raise RuntimeError("google-auth library is missing")
+            credentials, project = google.auth.default()
 
-        # Confirm ADC are available before initializing Vertex.
-        credentials, project = google.auth.default()
-        vertexai.init(project=PROJECT_ID, location=LOCATION)
+        vertexai.init(project=PROJECT_ID, location=LOCATION, credentials=credentials)
         st.session_state.ai_enabled = True
     except (DefaultCredentialsError, RuntimeError) as e:
         st.session_state.ai_enabled = False
         st.warning(
-            "Vertex AI is not available because Application Default Credentials are not configured. "
+            "Vertex AI is not available because Application Default Credentials or Streamlit service account secrets are not configured. "
             "Uploaded documents will still be saved, but auto extraction is disabled. "
-            "Run `gcloud auth application-default login` or set GOOGLE_APPLICATION_CREDENTIALS."
+            "Set `gcp_service_account` in Streamlit secrets or run `gcloud auth application-default login`."
         )
         st.error(f"Cloud Initialization Warning: {str(e)}")
     except Exception as e:
