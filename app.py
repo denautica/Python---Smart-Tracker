@@ -430,9 +430,16 @@ def render_file_preview(file_path, file_name):
     elif file_ext == 'pdf':
         with open(file_path, 'rb') as f:
             pdf_bytes = f.read()
-        b64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
-        pdf_display = f'<iframe src="data:application/pdf;base64,{b64_pdf}" width="100%" height="700px" type="application/pdf"></iframe>'
-        st.markdown(pdf_display, unsafe_allow_html=True)
+
+        st.download_button("Download PDF", pdf_bytes, file_name=file_name, mime="application/pdf")
+        pdf_url = f"data:application/pdf;base64,{base64.b64encode(pdf_bytes).decode('utf-8')}"
+        st.markdown(
+            f'<a href="{pdf_url}" target="_blank" rel="noreferrer">Open PDF in new tab</a>',
+            unsafe_allow_html=True
+        )
+        st.markdown(
+            "If Chrome blocks the embedded preview, use the download link above or open the file in a local PDF viewer."
+        )
     else:
         st.write(f"Preview is not available for {file_name}. Download to view the file.")
         with open(file_path, 'rb') as f:
