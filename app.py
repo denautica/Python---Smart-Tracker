@@ -2,12 +2,37 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 import os
-from datetime import datetime
+import re
+from datetime import datetime, timedelta
 import vertexai
 from vertexai.generative_models import GenerativeModel, Part
 import json
 import io
 import base64
+
+try:
+    import PyPDF2
+except ImportError:
+    PyPDF2 = None
+
+try:
+    import pytesseract
+except ImportError:
+    pytesseract = None
+
+from PIL import Image
+
+try:
+    import PyPDF2
+except ImportError:
+    PyPDF2 = None
+
+try:
+    import pytesseract
+except ImportError:
+    pytesseract = None
+
+from PIL import Image
 
 try:
     import google.auth
@@ -58,10 +83,197 @@ def load_gcp_service_account_credentials():
 
     return None, None
 
+def describe_credentials(credentials):
+    if credentials is None:
+        return None
+    email = getattr(credentials, "service_account_email", None) or getattr(credentials, "client_email", None)
+    project = getattr(credentials, "project_id", None)
+    return {
+        "email": email,
+        "project": project
+    }
+
+
+def extract_text_from_pdf(file_path):
+    if PyPDF2 is None:
+        raise RuntimeError("PyPDF2 is required for PDF fallback extraction")
+    text_chunks = []
+    with open(file_path, "rb") as f:
+        reader = PyPDF2.PdfReader(f)
+        for page in reader.pages:
+            page_text = page.extract_text()
+            if page_text:
+                text_chunks.append(page_text)
+    return "\n".join(text_chunks)
+
+
+def extract_text_from_image(file_path):
+    if pytesseract is None:
+        return ""
+    with Image.open(file_path) as image:
+        return pytesseract.image_to_string(image)
+
+
+def parse_date_from_text(text):
+    if not text:
+        return ""
+    patterns = [r"(20\d{2}-\d{2}-\d{2})", r"(\d{2}/\d{2}/\d{4})", r"(\d{2}-\d{2}-\d{4})"]
+    for pat in patterns:
+        match = re.search(pat, text)
+        if match:
+            raw = match.group(1)
+            try:
+                if "-" in raw and raw.count("-") == 2:
+                    return raw
+                if "/" in raw:
+                    month, day, year = raw.split("/")
+                    return f"{year}-{int(month):02d}-{int(day):02d}"
+                if raw.count("-") == 2:
+                    month, day, year = raw.split("-")
+                    return f"{year}-{int(month):02d}-{int(day):02d}"
+            except Exception:
+                continue
+    return ""
+
+
+def parse_term_notice(text):
+    if not text:
+        return "None"
+    match = re.search(r"(\d{1,2}\s*(?:day|days|month|months|year|years))", text, re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+    return "None"
+
+
+def parse_money(text):
+    if not text:
+        return ""
+    match = re.search(r"\$\s?[\d,]+(?:\.\d{2})?", text)
+    return match.group(0).strip() if match else ""
+
+
+def parse_fallback_extraction(file_path, mime_type):
+    try:
+        if mime_type == "application/pdf":
+            full_text = extract_text_from_pdf(file_path)
+        elif mime_type.startswith("image/"):
+            full_text = extract_text_from_image(file_path)
+        else:
+            full_text = ""
+    except Exception:
+        full_text = ""
+
+    normalized = full_text.strip()
+    lower = normalized.lower()
+    if not normalized:
+        return {
+            "project_name": "Pending Manual Review",
+            "property_name": "",
+            "vendor_name": "",
+            "document_type": "Other",
+            "status": "Active",
+            "short_summary": "Manual entry required.",
+            "description": "",
+            "is_recurring": "No",
+            "billing_interval": "N/A",
+            "interval_amount": "N/A",
+            "deposit_required": "No",
+            "contract_date": "",
+            "term_start": "",
+            "term_end": "",
+            "auto_renew": "No",
+            "term_notice": "None",
+            "cancel_deadline": ""
+        }
+
+    project_name = normalized.splitlines()[0].strip()[:60] if normalized else "Pending Manual Review"
+    vendor_name = ""
+    for label in ["vendor", "from", "issued by", "contractor", "company"]:
+        match = re.search(rf"{label}[:\s]+([A-Za-z0-9 &.,\-]+)", normalized, re.IGNORECASE)
+        if match:
+            vendor_name = match.group(1).strip()
+            break
+
+    document_type = "Other"
+    if "invoice" in lower or "bill" in lower:
+        document_type = "Receipt/Invoice"
+    elif "estimate" in lower or "proposal" in lower or "quote" in lower:
+        document_type = "Estimate/Bid"
+    elif "contract" in lower or "agreement" in lower:
+        document_type = "Executed Contract"
+    elif "photo" in lower or "site photo" in lower or "image" in lower:
+        document_type = "Image/Site Photo"
+
+    status = "Active"
+    if "expired" in lower:
+        status = "Expired"
+    elif "superseded" in lower or "replaced" in lower:
+        status = "Superseded"
+
+    is_recurring = "Yes" if any(word in lower for word in ["monthly", "quarterly", "annually", "annual", "subscription", "recurring"]) else "No"
+    billing_interval = "N/A"
+    if is_recurring == "Yes":
+        if "monthly" in lower:
+            billing_interval = "Monthly"
+        elif "quarterly" in lower:
+            billing_interval = "Quarterly"
+        elif "annually" in lower or "annual" in lower:
+            billing_interval = "Annually"
+        else:
+            billing_interval = "Recurring"
+
+    interval_amount = parse_money(normalized)
+    deposit_required = "Yes" if "deposit" in lower else "No"
+    if deposit_required == "Yes":
+        deposit_match = re.search(r"deposit[:\s]*\$?\s?[\d,]+(?:\.\d{2})?%?", normalized, re.IGNORECASE)
+        if deposit_match:
+            deposit_required = deposit_match.group(0).strip()
+
+    contract_date = parse_date_from_text(normalized)
+    term_start = parse_date_from_text(normalized)
+    term_end = ""
+    if "term end" in lower or "expiration" in lower or "expiring" in lower:
+        term_end = parse_date_from_text(normalized)
+
+    term_notice = parse_term_notice(normalized)
+    cancel_deadline = ""
+    try:
+        if term_end and term_notice != "None":
+            if "day" in term_notice:
+                days = int(re.search(r"(\d+)", term_notice).group(1))
+                end_dt = datetime.strptime(term_end, "%Y-%m-%d")
+                cancel_deadline = (end_dt - timedelta(days=days)).strftime("%Y-%m-%d")
+    except Exception:
+        cancel_deadline = ""
+
+    summary = normalized.split(".")[0].strip() if "." in normalized else normalized[:120]
+    description = normalized[:500].replace("\n", " ")
+
+    return {
+        "project_name": project_name or "Pending Manual Review",
+        "property_name": "",
+        "vendor_name": vendor_name,
+        "document_type": document_type,
+        "status": status,
+        "short_summary": summary,
+        "description": description,
+        "is_recurring": is_recurring,
+        "billing_interval": billing_interval,
+        "interval_amount": interval_amount or "N/A",
+        "deposit_required": deposit_required,
+        "contract_date": contract_date,
+        "term_start": term_start,
+        "term_end": term_end,
+        "auto_renew": "No",
+        "term_notice": term_notice,
+        "cancel_deadline": cancel_deadline
+    }
+
 if "ai_status_checked" not in st.session_state:
     st.session_state.ai_status_checked = True
     st.session_state.ai_enabled = False
     st.session_state.ai_auth_source = None
+    st.session_state.ai_auth_identity = None
     try:
         credentials, auth_source = load_gcp_service_account_credentials()
         st.session_state.ai_auth_source = auth_source
@@ -72,6 +284,7 @@ if "ai_status_checked" not in st.session_state:
             credentials, project = google.auth.default()
             st.session_state.ai_auth_source = "Application Default Credentials"
 
+        st.session_state.ai_auth_identity = describe_credentials(credentials)
         vertexai.init(project=PROJECT_ID, location=LOCATION, credentials=credentials)
         st.session_state.ai_enabled = True
     except (DefaultCredentialsError, RuntimeError) as e:
@@ -183,7 +396,11 @@ def ai_analyze_file(file_path, mime_type):
         return json.loads(cleaned)
     except Exception as e:
         st.error(f"AI Extraction failed via Vertex: {str(e)}")
-        return None
+        try:
+            return parse_fallback_extraction(file_path, mime_type)
+        except Exception as fallback_err:
+            st.error(f"Fallback extraction failed: {str(fallback_err)}")
+            return None
 
 # ==========================================
 # --- EXCEL GENERATION UTILITY ---
@@ -229,12 +446,18 @@ st.title("📂 Smart Project Contract & Estimate Database")
 
 if AI_ENABLED:
     st.success(f"Vertex AI enabled using: {st.session_state.ai_auth_source}")
+    if st.session_state.ai_auth_identity:
+        identity = st.session_state.ai_auth_identity
+        st.text(f"Auth identity: {identity.get('email') or 'unknown'} | project_id: {identity.get('project') or 'unknown'}")
 else:
     warning_text = st.session_state.get("ai_auth_source") or "no valid auth source found"
     st.warning(
         "Vertex AI is disabled. Uploaded documents will still save, but auto extraction will not run. "
         f"Auth source: {warning_text}"
     )
+    if st.session_state.ai_auth_identity:
+        identity = st.session_state.ai_auth_identity
+        st.text(f"Auth identity attempted: {identity.get('email') or 'unknown'} | project_id: {identity.get('project') or 'unknown'}")
 
 # --- Sidebar Upload Components ---
 st.sidebar.header("➕ Bulk Document Upload")
