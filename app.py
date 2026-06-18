@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import sqlite3
 import os
@@ -433,12 +434,22 @@ def render_file_preview(file_path, file_name):
 
         st.download_button("Download PDF", pdf_bytes, file_name=file_name, mime="application/pdf")
         pdf_url = f"data:application/pdf;base64,{base64.b64encode(pdf_bytes).decode('utf-8')}"
+        pdf_base64 = base64.b64encode(pdf_bytes).decode('utf-8')
+        pdf_html = f"""
+            <html>
+                <body style='margin:0;padding:0;'>
+                    <embed src='data:application/pdf;base64,{pdf_base64}' type='application/pdf' width='100%' height='700px' />
+                </body>
+            </html>
+        """
+        components.html(pdf_html, height=720)
         st.markdown(
             f'<a href="{pdf_url}" target="_blank" rel="noreferrer">Open PDF in new tab</a>',
             unsafe_allow_html=True
         )
         st.markdown(
             "If Chrome blocks the embedded preview, use the download link above or open the file in a local PDF viewer."
+            "If Chrome still blocks this view, use the download button above to open the file locally."
         )
     else:
         st.write(f"Preview is not available for {file_name}. Download to view the file.")
@@ -496,14 +507,14 @@ if uploaded_files:
     for f_item in uploaded_files:
         if f_item.name not in st.session_state.bulk_ai_data:
             file_path = os.path.abspath(os.path.join(UPLOAD_DIR, f_item.name))
-            
+
             try:
                 with open(file_path, "wb") as f:
                     f.write(f_item.getbuffer())
             except Exception as folder_err:
                 st.error(f"📁 File System Error: Could not save '{f_item.name}'. Details: {str(folder_err)}")
                 continue
-                
+
             with st.sidebar.spinner(f"🤖 AI Scanning {f_item.name}..."):
                 ext = f_item.name.lower().split(".")[-1]
                 mime_type = "application/pdf" if ext == "pdf" else f"image/{'jpeg' if ext in ['jpg', 'jpeg'] else 'png'}"
@@ -527,9 +538,9 @@ if uploaded_files:
 if uploaded_files or st.session_state.bulk_ai_data:
     st.sidebar.markdown("---")
     st.sidebar.markdown("### 📋 Review Extractions")
-    
+
     file_options = list(st.session_state.bulk_ai_data.keys())
-    
+
     if st.session_state.review_queue_index >= len(file_options):
         st.session_state.review_queue_index = max(0, len(file_options) - 1)
 
@@ -538,14 +549,14 @@ if uploaded_files or st.session_state.bulk_ai_data:
         file_options, 
         index=st.session_state.review_queue_index
     )
-    
+
     current_selection_idx = file_options.index(selected_file_name)
     if current_selection_idx != st.session_state.review_queue_index:
         st.session_state.review_queue_index = current_selection_idx
         st.rerun()
-        
+
     current_data = st.session_state.bulk_ai_data.get(selected_file_name, {})
-    
+
     preview_file_path = os.path.abspath(os.path.join(UPLOAD_DIR, selected_file_name))
     st.markdown("### 📄 Uploaded Document Preview")
     with st.expander(f"Preview: {selected_file_name}", expanded=False):
@@ -557,10 +568,10 @@ if uploaded_files or st.session_state.bulk_ai_data:
     v_init = current_data.get("vendor_name", "")
     doc_types = ["Estimate/Bid", "Executed Contract", "Image/Site Photo", "Receipt/Invoice", "Other"]
     d_type_idx = doc_types.index(current_data.get("document_type", "Estimate/Bid")) if current_data.get("document_type", "Estimate/Bid") in doc_types else 0
-    
+
     status_types = ["Active", "Expired", "Superseded"]
     status_idx = status_types.index(current_data.get("status", "Active")) if current_data.get("status", "Active") in status_types else 0
-    
+
     short_init = current_data.get("short_summary", "")
     desc_init = current_data.get("description", "")
     rec_init = 1 if current_data.get("is_recurring", "No") == "Yes" else 0
@@ -573,7 +584,7 @@ if uploaded_files or st.session_state.bulk_ai_data:
     end_date_parsed = parse_to_widget_date(current_data.get("term_end", ""))
     deadline_parsed = parse_to_widget_date(current_data.get("cancel_deadline", ""))
     auto_renew_idx = 1 if current_data.get("auto_renew", "No") == "Yes" else 0
-    
+
     if "current_review_file" not in st.session_state or st.session_state.current_review_file != selected_file_name:
         st.session_state.current_review_file = selected_file_name
         st.session_state.review_project = p_init
@@ -645,34 +656,34 @@ if uploaded_files or st.session_state.bulk_ai_data:
     with st.sidebar.form("upload_form", clear_on_submit=False):
         st.markdown(f"**Document Queue:** {st.session_state.review_queue_index + 1} of {len(file_options)}")
         st.markdown(f"**Editing Profile:** `{selected_file_name}`")
-        
+
         project = st.text_input("Project / Task Name", value=st.session_state.review_project, key="review_project")
         property_name = st.text_input("Property / Location Name", value=st.session_state.review_property, key="review_property")
         vendor = st.text_input("Vendor Name", value=st.session_state.review_vendor, key="review_vendor")
         doc_type = st.selectbox("Document Type", doc_types, index=safe_index(st.session_state.review_doc_type, doc_types), key="review_doc_type")
         status = st.selectbox("Contract Lifecycle Status", status_types, index=safe_index(st.session_state.review_status, status_types), key="review_status")
-        
+
         contract_date = st.date_input("Document / Execution Date", value=st.session_state.review_contract_date, key="review_contract_date")
-        
+
         st.markdown("---")
         short_summary = st.text_input("Short Summary Statement", value=st.session_state.review_short_summary, key="review_short_summary")
         description = st.text_area("Detailed Scope & Keywords", value=st.session_state.review_description, height=100, key="review_description")
-        
+
         st.markdown("---")
         is_recurring = st.radio("Is this a Recurring Service / Utility?", ["No", "Yes"], index=safe_index(st.session_state.review_is_recurring, ["No", "Yes"]), key="review_is_recurring")
         billing_interval = st.text_input("Billing Interval (e.g., Monthly, N/A)", value=st.session_state.review_billing_interval, key="review_billing_interval")
         interval_amount = st.text_input("Rate / Interval Billing Cost", value=st.session_state.review_interval_amount, key="review_interval_amount")
         deposit_required = st.text_input("Deposit Requirement Status", value=st.session_state.review_deposit_required, key="review_deposit_required")
-        
+
         st.markdown("---")
         st.markdown("### 🗓️ Contract Term & Cancellation Dates")
         start_date = st.date_input("Term Start Date", value=st.session_state.review_term_start, key="review_term_start")
-        
+
         end_date = st.date_input("Term Expiration Date", value=st.session_state.review_term_end, key="review_term_end")
         auto_renew = st.radio("Auto-Renew Active?", ["No", "Yes"], index=safe_index(st.session_state.review_auto_renew, ["No", "Yes"]), key="review_auto_renew")
         term_notice = st.text_input("Notice Needed (e.g., 30 Days)", value=st.session_state.review_term_notice, key="review_term_notice")
         cancel_deadline = st.date_input("AI Calculated Cancellation Due Date", value=st.session_state.review_cancel_deadline, key="review_cancel_deadline")
-        
+
         submit = st.form_submit_button("Commit and Advance Queue ➡️")
 
     if submit:
@@ -766,11 +777,11 @@ if not df.empty:
         "Deposit Status", "Document Date", "File Name Reference", "Term Window Start", "Term Expiration End", 
         "Auto Renew Clause", "Notice Window Days", "Cancellation Notice Deadline", "System Entry Date"
     ]
-    
+
     excel_data_stream = convert_df_to_excel(df_clean_report)
     current_timestamp = datetime.now().strftime("%Y-%m-%d")
     report_filename = f"contracts_export_{current_timestamp}.xlsx"
-    
+
     st.download_button(
         label="📊 Export Current Results to Excel (.xlsx)",
         data=excel_data_stream,
@@ -786,27 +797,27 @@ if not df.empty:
         "Short Summary", "Recurring", "Billing Interval", "Interval Amount", "Deposit Status", "Doc Date",
         "File Name", 'Term Start', "Term End", "Auto-Renew", "Notice Period", "Cancel Deadline", "Date Added"
     ]
-    
+
     for index, row in df.iterrows():
         status_indicator = "🟢" if row["Status"] == "Active" else "🔴" if row["Status"] == "Expired" else "🟡 [SUPERSEDED]"
         header_title = f"{status_indicator} {row['Project/Task']} — {row['Vendor']} ({row['Type']})"
         if row["Property"]:
             header_title = f"📍 [{row['Property']}] {status_indicator} {row['Project/Task']} — {row['Vendor']}"
-            
+
         with st.expander(header_title):
             edit_key = f"edit_active_{row['ID']}"
             if edit_key not in st.session_state:
                 st.session_state[edit_key] = False
-                
+
             if not st.session_state[edit_key]:
                 if row["Status"] == "Expired":
                     st.error("🚨 WARNING: This contract has expired and is no longer contractually legally binding.")
                 elif row["Status"] == "Superseded":
                     st.warning("⚠️ ATTENTION: This document has been replaced by an upgraded or newer project version profile entry.")
-                    
+
                 st.markdown(f"**Quick Overview:** *{row['Short Summary']}*")
                 st.markdown("---")
-                
+
                 c_left, c_right = st.columns(2)
                 with c_left:
                     st.markdown(f"**Detailed Scope & Specifications:**")
@@ -816,7 +827,7 @@ if not df.empty:
                     if os.path.exists(file_path):
                         with open(file_path, "rb") as file:
                             st.download_button(label="📥 Download Original Document", data=file, file_name=str(row["File Name"]), key=f"dl_{row['ID']}")
-                
+
                 with c_right:
                     st.markdown("📊 **Operational & Financial Status:**")
                     m1, m2, m3, m4 = st.columns(4)
@@ -828,17 +839,17 @@ if not df.empty:
                         st.metric(label="Billing Cycle", value=f"{row['Recurring']} ({row['Billing Interval']})")
                     with m4:
                         st.metric(label="Deposit Req.", value=row["Deposit Status"])
-                    
+
                     st.markdown("🔒 **Critical Dates & Renewal Terms:**")
                     st.write(f"• **Document Execution Date:** {row['Doc Date']}")
                     st.write(f"• **Active Windows:** {row['Term Start']} to {row['Term End']}")
                     st.write(f"• **Auto-Renewal Clause:** {row['Auto-Renew']} (Requires {row['Notice Period']} notice)")
-                    
+
                     if row["Cancel Deadline"] != "N/A" and row["Cancel Deadline"] != "":
                         st.error(f"⚠️ **Notice Cancellation Deadline:** Notice must be sent before **{row['Cancel Deadline']}**")
                     else:
                         st.write("• **Notice Cancellation Deadline:** N/A")
-                
+
                 st.markdown("---")
                 btn_col1, btn_col2, btn_spacer = st.columns([1, 1, 5])
                 with btn_col1:
@@ -854,7 +865,7 @@ if not df.empty:
                         conn.close()
                         st.success("Entry cleanly removed from index tracker.")
                         st.rerun()
-                        
+
             else:
                 st.markdown("### 🛠️ Edit Contract Fields")
                 with st.form(key=f"edit_form_panel_{row['ID']}"):
@@ -872,13 +883,13 @@ if not df.empty:
                         up_deposit = st.text_input("Deposit Requirement", value=row["Deposit Status"])
                         up_doc_date = st.text_input("Document Date (YYYY-MM-DD)", value=row["Doc Date"])
                         up_deadline = st.text_input("Cancellation Deadline Date (YYYY-MM-DD)", value=row["Cancel Deadline"])
-                    
+
                     f_col1, f_col2, f_spacer = st.columns([1.5, 1.5, 5])
                     with f_col1:
                         save_changes = st.form_submit_button("💾 Save Corrections")
                     with f_col2:
                         cancel_changes = st.form_submit_button("❌ Cancel")
-                        
+
                 if save_changes:
                     conn = sqlite3.connect(DB_FILE)
                     c = conn.cursor()
@@ -898,7 +909,7 @@ if not df.empty:
                     st.session_state[edit_key] = False
                     st.success("Changes permanently written down.")
                     st.rerun()
-                    
+
                 if cancel_changes:
                     st.session_state[edit_key] = False
                     st.rerun()
