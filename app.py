@@ -12,12 +12,19 @@ import base64
 # ==========================================
 # --- AI SETUP & CONFIGURATION ---
 # ==========================================
-PROJECT_ID = "contr-tracker" 
-LOCATION = "us-central1" 
+PROJECT_ID = "contr-tracker"
+LOCATION = "us-central1"
+AI_ENABLED = True
 
 try:
     vertexai.init(project=PROJECT_ID, location=LOCATION)
 except Exception as e:
+    AI_ENABLED = False
+    st.warning(
+        "Vertex AI is not available in this environment. "
+        "Uploaded documents will still be saved, but auto extraction is disabled. "
+        "Set GOOGLE_APPLICATION_CREDENTIALS or run on Google Cloud to enable AI extraction."
+    )
     st.error(f"Cloud Initialization Warning: {str(e)}")
 
 # Safe relative paths using forward slashes to prevent OneDrive Unicode escape issues
@@ -183,8 +190,11 @@ if uploaded_files:
             with st.sidebar.spinner(f"🤖 AI Scanning {f_item.name}..."):
                 ext = f_item.name.lower().split(".")[-1]
                 mime_type = "application/pdf" if ext == "pdf" else f"image/{'jpeg' if ext in ['jpg', 'jpeg'] else 'png'}"
-                
-                extracted_data = ai_analyze_file(file_path, mime_type)
+
+                extracted_data = None
+                if AI_ENABLED:
+                    extracted_data = ai_analyze_file(file_path, mime_type)
+
                 if extracted_data:
                     st.session_state.bulk_ai_data[f_item.name] = extracted_data
                 else:
